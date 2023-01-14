@@ -8,9 +8,9 @@ base_url <- "https://www.justice.gov"
 # Look for 'U.S.S.G. § 3A1.4'
 jan6url <- "https://www.justice.gov/usao-dc/capitol-breach-cases"
 
-gsUrl <- "1Uib3M6B7PYW6PZaOPZjhivzwJgE-bz2VqF5NSD9wmS0"
+gsUrl <- "12TXm_e9Hba-jv3g4GasbP2RLsfC-FtZpGWewcG8gJjg"
 
-jan6_idb <- read_sheet(gsUrl)
+jan6_idb <- read_sheet(gsUrl, "Source data")
 
 # parse with rvest
 myLinks <- jan6url %>% 
@@ -30,9 +30,9 @@ myPleaUrls <- myUrls[grepl("Plea Agreement", myLinks)]
 pleaTexts <- lapply(myPleaUrls, pdf_text) 
 
 
-nPleaAgreements <- str_count(df$`Case Documents`, "Plea Agreement") 
+nPleaAgreements <- str_count(jan6_idb$`Case Documents`, "Plea Agreement") 
 nPleaAgreements[is.na(nPleaAgreements)] <- 0
-pleaNames <- unlist(lapply(1:nrow(df),function(n)rep(df$Name[n],nPleaAgreements[n])))
+pleaNames <- unlist(lapply(1:nrow(jan6_idb),function(n)rep(jan6_idb$Name[n],nPleaAgreements[n])))
 
 Plea_Terror <- cbind.data.frame(Name = pleaNames, url = myPleaUrls)
 
@@ -55,7 +55,7 @@ pleaTexts <- pleaTexts %>% str_replace_all("\\n"," ")
 pleaTexts <- pleaTexts %>% str_replace_all("\\r"," ")
 
 pleaTexts <- pleaTexts %>% str_replace_all(" +"," ")
-pleaTextsSum <- lapply(pleaTexts,function(x)sum(grepl("3A1\\.4",x), na.rm = T))
+pleaTextsSum <- lapply(pleaTexts,function(x)sum(grepl("3A1",x), na.rm = T))
 
 Plea_Terror$Count3A1.4 <- unlist(pleaTextsSum)
 
@@ -69,5 +69,5 @@ TOFFLVL$Name <- jan6_idb$Name
 Plea_Terror <- Plea_Terror %>% left_join(TOFFLVL)
 noTerror_Felonies <- Plea_Terror %>% filter(Felony & Count3A1.4==0)
 Plea_Terror %>%
-  sheet_write(ss = "1Uib3M6B7PYW6PZaOPZjhivzwJgE-bz2VqF5NSD9wmS0", sheet = "Plea Agreements")
+  sheet_write(ss = gsUrl, sheet = "Plea Agreements 2")
 

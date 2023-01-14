@@ -1,26 +1,21 @@
 library(dplyr)
 library(stringr)
+library(googlesheets4)
+
 getwd()
-tPP_path <- "Inputs/tPPFall2020cases_2022-02-14.csv"
+mySheet <- "1g_kBPD5BiAf0hhXjjLgJojgJy_1_HKOO--YkIRZJ_nA"
+##################
+### End Params ###
+##################
 
-tPP <- read.csv(tPP_path, stringsAsFactors = F, strip.white = T)
+tPP <- read_sheet(mySheet, "Source data")
 
-tPP <- tPP %>%
-  within({
-    federal <- Federal == "Federal"
-    })
+# tPP <- tPP %>%
+#   within({
+#     federal <- Federal == "Federal"
+#     })
 
-# tPP %>% filter(grepl("vida", tolower(Full.legal.name)))
+# gs4_create(paste0("tPP cases as of ", tPP_updated))
+# myDrive <- googledrive::drive_ls()
 
-feds <- tPP %>% filter(federal)
-feds$Case.ID %>% head(30)
-feds$Docket <- feds$Case.ID %>% str_remove("_.*$")
-
-table(feds$Docket %in% cr$DOCKET)
-"2007180" %in% cr$DOCKET
-head(cr$DOCKET)
-"1200265" %in% cr$DOCKET
-cr %>% filter(DOCKET == "1200265" & FISCALYR == 2020) %>% t
-
-
-tPP$terror <- grepl("terror",tolower(paste(tPP$Additional.details,tPP$Short.narrative)))
+# tPP %>% sheet_write(mySheet, "Source data")

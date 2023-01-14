@@ -1,0 +1,360 @@
+---
+title: "Dispositions and sentences of federal felony cases related to the January 6 2021 Capitol Breach"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+library(googlesheets4)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(kableExtra)
+library(plotly)
+library(stringr)
+m2y <- function(x){
+  y = x%/%12
+  m = x-(12*y)
+  paste(y, "years", ifelse(m>0, paste0(" and", m, "months"),""))
+}
+auto_width <- function(x){
+    myKable <- x %>% kable %>% kable_styling("striped") 
+  for (n in 1:length(x)) {
+  myKable <- column_spec(myKable, n, width_min = paste0(max(nchar(as.character(x[,n])))/1.7,"em"))  
+  }
+  return(myKable)
+  }
+
+jan6_sheet <- "12TXm_e9Hba-jv3g4GasbP2RLsfC-FtZpGWewcG8gJjg"
+jan6All <- read_sheet(jan6_sheet, "Source data")
+myFJC <- read_sheet(jan6_sheet, "All Defendants")
+
+FOFFLVL <- myFJC[,grepl("FOFFLVL", names(myFJC))]
+myFJC$Felony_Filing <- apply(FOFFLVL, 1, function(x)4 %in% x)
+tfelony <- read_sheet(jan6_sheet, "Felony Convictions") %>% 
+  filter(FELONY) %>%
+  within({
+    violent <- Violent
+    destructive <- Destructive
+    Destructive <- case_when(is.na(Destructive) ~ "",
+                             !is.na(Destructive) & Destructive ~ "Yes",
+                             !is.na(Destructive) & !Destructive ~ "No")
+    Violent <- case_when(is.na(Violent) ~ "",
+                             !is.na(Violent) & Violent ~ "Yes",
+                             !is.na(Violent) & !Violent ~ "No")
+    # destructive[is.na(destructive)] <- FALSE
+    # violent[is.na(violent)] <- FALSE
+    
+    # destructive[is.na(`Assigned Reader`)] <- NA 
+    # violent[is.na(`Assigned Reader`)] <- NA 
+    
+    `Violent or Destructive` <- violent | destructive
+  })
+
+
+jan6 <- jan6All[, !names(jan6All) %in% c("Case Number", "DOCKET", "TYPEREG", "CASLGKY", "SENTDATE", "TTITLE1", "TOFFLVL1", "TTITLE2", "TOFFLVL2", "TTITLE3", "TOFFLVL3", "TTITLE4", "TOFFLVL4", "TTITLE5", "TOFFLVL5", "PRISTOT", "DEFNO")] %>% inner_join(tfelony)
+
+
+# Sentencing Guidelines from FJC IDB codebook
+guidelines <- 
+  rbind.data.frame(cbind("A", 0, 0 ),
+          cbind("B", 0, 6),
+          cbind("C", 7, 12),
+          cbind("0", 12, 24),
+          cbind("1", 24, 36),
+          cbind("2", 48, 60),
+          cbind("3", 72, 120),
+          cbind("4", 132, 180),
+          cbind("5", 192, 240),
+          cbind("6", 252, 300),
+          cbind("7", 300, 1200),
+          cbind("8", 10000, 10000),
+          cbind("9", 10000, 100000),
+          cbind("Z", NA, NA))
+
+names(guidelines) <- c("SEV", "low", "high")
+guidelines$low <- as.numeric(guidelines$low)
+guidelines$high <- as.numeric(guidelines$high)
+
+# Take the variables related to severity of filing and termination offenses, and get just the prison term part of that coded variable (the first character)
+PSEV <- jan6[,grepl("SEV", names(jan6))] %>%
+  apply(1, substr, 1, 1) %>% t %>%
+  apply(1, function(x)gsub("[^ABC0-9]","",x)) %>% t %>%
+  apply(1, function(x)ifelse(x=="",NA,x)) %>% t %>%
+  as.data.frame %>%
+  mutate_all(factor, levels = c("A","B", "C", as.character(0:9))) 
+names(PSEV) <- paste0("P",names(PSEV))
+
+# Get the sum of the severity indicators for each charge
+jan6$PFSEVTOT <- PSEV[,grepl("PFSEV",names(PSEV))] %>%
+  mutate_all(function(x)case_when(is.na(x) ~ NA_real_, x == "A" ~ 0, x == "B" ~ 1, x == "C" ~ 2, TRUE ~ as.numeric(x)+3)) %>% 
+  rowSums(na.rm = T)
+
+# Get the max sentence for each case
+jan6$myPRISTOT <- apply(jan6[,grepl("PRISTIM",names(jan6))],1,max, na.rm = T)
+jan6$myPRISTOT[jan6$myPRISTOT==-1] <- 0  
+jan6$myPRISTOT[jan6$myPRISTOT<0] <- NA  
+
+# Get the actual amount of prison time recommended for each charge according to severity. Add that to the jan6 dataset
+jan6guidelines <- 
+  lapply(names(PSEV), function(n){
+    myData <- as.character(PSEV[[n]])
+    myData[is.na(myData)] <- "Z"
+    myData[!myData %in% guidelines$SEV]
+    myData <- bind_rows(lapply(myData,function(x)guidelines[guidelines$SEV == x,c(2,3)]))
+    names(myData) <- paste(n, names(myData), sep = "_")
+    myData
+    }) %>% 
+  bind_cols
+
+# Get the maximums of the high and low bounds for the prison guidelines for all the charges for each case 
+jan6$PTSEVh <- jan6guidelines[,grepl("T",names(jan6guidelines)) & grepl("high",names(jan6guidelines))] %>%
+  apply(1, max, na.rm = T)
+jan6$PTSEVh[is.infinite(jan6$PTSEVh)] <- NA
+jan6$PTSEVl <- jan6guidelines[,grepl("T",names(jan6guidelines)) & grepl("low",names(jan6guidelines))] %>%
+  apply(1, max, na.rm = T)
+jan6$PTSEVl[is.infinite(jan6$PTSEVl)] <- NA
+jan6 <- jan6 %>% cbind(PSEV)
+
+# Replace the negative numbers representing NA values with NA 
+jan6$PRISTOT <- ifelse(jan6$PRISTOT %in% c(-3,-8), NA, jan6$PRISTOT)
+jan6$PRISTOT <- ifelse(jan6$PRISTOT == -1, 0, jan6$PRISTOT)
+
+# table(jan6$PRISTOT <= jan6$PTSEVh & jan6$PRISTOT >= jan6$PTSEVl)
+# table(jan6$PRISTOT <= jan6$PTSEVh)
+# jan6 %>% filter(PRISTOT > PTSEVh) %>% select(`Full legal name`,docketNumber, District, PTSEVh, PRISTOT)
+# table(jan6$PRISTOT <= jan6$PTSEVl)
+# summary(jan6$PTSEVh - jan6$PTSEVl)
+# jan6[,c("PRISTOT", "PTSEVh", "PTSEVl")]
+
+# Add on totals for offense levels too
+FOFFLVL <- jan6[,grepl("FOFFLVL", names(jan6))] %>%
+  mutate_all(function(x)ifelse(x<0,NA,x))
+
+jan6$FOFFLVLTOT <- FOFFLVL %>% rowSums(na.rm = T)
+jan6$FOFFLVLTOT <- ifelse(jan6$FOFFLVLTOT == 0, NA, jan6$FOFFLVLTOT)
+
+FOFFLVL <- FOFFLVL %>% mutate_all(factor, levels = c(1,3,4))
+jan6[,grepl("FOFFLVL", names(jan6))] <- FOFFLVL
+
+DISP <- jan6[, grepl("DISP[0-9]", names(jan6))] %>% 
+  mutate_all(function(x)case_when(x == -8 ~ NA_character_, is.na(x) ~ NA_character_, x == 4 ~ "Convicted/final plea of guilty", x == 1 ~ "Dismissed", x == 15 ~ "Dismissed without prejudice", x == 9 ~ "Convicted by jury after trial", x == 2 ~ "Acquitted by court", x == 11 ~ "Nolle prosequi", TRUE ~ as.character(x)) %>% factor(ordered = TRUE, levels = c("Convicted by jury after trial", "Convicted/final plea of guilty", "Acquitted by court", "Nolle prosequi", "Dismissed without prejudice", "Dismissed")))
+
+jan6$DISPmax <-  apply(DISP, 1, function(x){x[order(x)][1]})
+
+SENTENCES <- jan6[,grepl("PRISTIM", names(jan6))] %>%
+  mutate_all(function(x)ifelse(x<0,NA,x))
+
+FTITLE <- jan6[,grepl("FTITLE", names(jan6))] %>%
+  mutate_all(function(x)ifelse(x==-8,NA,x))
+
+lookup <- jan6 %>% 
+  filter(myPRISTOT > PTSEVl) %>% 
+  select(Name, 
+         Docket = `Case Number`, 
+         `Prison Time (Months)` = PRISTOT, 
+         `Guidelines Lower Bound` = PTSEVl,
+         `Guidelines Upper Bound` = PTSEVh)
+
+jan6$`Filing Offenses` <- jan6[,grepl("FTITLE", names(jan6))] %>%
+  apply(1, function(x){
+    x <- x[!is.na(x) & x !=-8]
+    paste(x, collapse = ", ")})
+jan6$sentenced <- !is.na(jan6$PRISTOT)
+notSentenced <- jan6 %>% filter(
+  !sentenced
+  
+  # !(as.Date(SENTDATE) > as.Date("2000-01-01"))
+  )
+hasDisp <- notSentenced %>% filter(!is.na(DISP1) & DISP1!=-8)
+hasDisp$DISP1 %>% table
+noDisp <- notSentenced %>% filter(is.na(DISP1)|DISP1==-8)
+noDisp$FILEDATE %>% summary
+noDisp <- noDisp %>% arrange(FILEDATE)
+
+
+minimums_in <- "Inputs/mandatory_minimums.csv"
+minimums <- minimums_in %>% read.csv(stringsAsFactors = F, strip.white = T)
+
+myMinimums <- minimums$STATUTE...U.S..SENTENCING.GUIDELINES.PROVISION %>% 
+  str_replace_all(" USC § ",":") %>%
+  toupper() %>%
+  str_replace_all("\\).*$","") %>%
+  str_replace_all("\\(","")
+
+ttitles <- jan6[, grepl("TTITLE[0-9]", names(jan6))]
+jan6$ttitles <- apply(ttitles,1,function(x)paste(unique(x[x!="-8"]),collapse = ", "))
+minMat <- apply(ttitles, 2, function(x)unlist(lapply(x,function(y)str_replace_all(y,"\\..*$","") %in% myMinimums))) & apply(DISP,2,function(x)grepl("Convicted",x))
+
+jan6$TMin <- rowSums(minMat)>0
+
+
+
+tfelony <- tfelony  %>% left_join(select(jan6, Name, myPRISTOT, TMin))
+
+tfelony$Assigned_Reader <- tfelony$`Assigned Reader`
+destructivenonviolent <- sum(tfelony$destructive & !is.na(tfelony$violent) & !tfelony$violent, na.rm = T)
+
+tfelony <- tfelony %>%
+  mutate(lower = `Guidelines range (months)` %>% str_remove(" to.*$") %>% as.numeric(),
+         upper = `Guidelines range (months)` %>% str_remove("^.*to ") %>% as.numeric())
+myline = cbind.data.frame(x = c(0,125), y = c(0,125))
+
+myPleaAgreements <- read_sheet(jan6_sheet,"Plea Outcomes")
+pleaSummary <- myPleaAgreements %>% group_by(`Reserved 3A1.4`,`Offense Level`,`Felony Conviction`) %>%
+  summarise(Count = n()) %>%
+  kable("html", escape = FALSE) %>%
+  kable_styling(bootstrap_options = c("hover", "condensed", "striped"))
+
+
+```
+
+## Data
+
+The [data for this report](https://docs.google.com/spreadsheets/d/12TXm_e9Hba-jv3g4GasbP2RLsfC-FtZpGWewcG8gJjg/edit?usp=sharing) are from two sources. The population of cases was identified using The DOJ's [dataset of January 6 cases](https://www.justice.gov/usao-dc/capitol-breach-cases). This lists `r format(nrow(myFJC), big.mark = ",")` cases, `r sum(myFJC$Felony_Filing, na.rm = T)` of which are related to a complaint of a felony offense.
+
+The source for information on sentencing is [the Federal Judicial Center's  (FJC) Integrated Database (IDB)](https://www.fjc.gov/research/idb). The last update to the criminal defendants dataset was on September 30, 2022.
+
+## Summary
+### Frequency of filing offenses
+
+```{r offenses}
+Offenses <- as.data.frame(table(c(FTITLE$FTITLE1, FTITLE$FTITLE2, FTITLE$FTITLE3, FTITLE$FTITLE4, FTITLE$FTITLE5)))
+names(Offenses) <- c("Title", "Frequency")
+Offenses <- Offenses %>% arrange(desc(Frequency))
+Offenses %>% auto_width() %>% scroll_box(height = "300px")
+# FTITLE %>% apply(1,function(x)sum(!is.na(x))) %>% table
+```
+### Dispositions
+<!-- `r sum(is.na(jan6$DISPmax))` cases do not appear to have a recorded disposition. They are either still awaiting an outcome, or have not been updated in the Federal Judicial Center Integrated Database yet.  -->
+`r sum(!is.na(jan6$DISPmax))` defendants have been convicted of a felony offense and sentenced. Their case dispositions are below.
+
+```{r disp}
+jan6 %>% filter(!is.na(DISPmax)) %>% group_by(Disposition = DISPmax) %>% summarise(Frequency = n()) %>%
+  ggplot(aes(x="", y=Frequency, fill=Disposition)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  geom_text(aes(label = Frequency, x = 1), position = position_stack(vjust=.5)) +
+  geom_text(aes(label = ifelse(Frequency<10,"",scales::percent(Frequency/sum(!is.na(jan6$DISPmax)), accuracy = 1)), x = .7), position = position_stack(vjust=.5), color = "white") +
+  labs(x = NULL, y = NULL, fill = NULL) +
+  theme_classic() +
+  theme(axis.line = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank()) + scale_fill_brewer(palette = "Set2")
+```
+
+### Sentences
+
+<!-- `r sum(jan6$SENTDATE > as.POSIXct(as.Date("1900-01-01")), na.rm = T)` cases have a recorded Sentencing Date.  -->
+<!-- `r sum(!is.na(jan6$myPRISTOT))` cases have a non-missing value for total prison time (including 0).  -->
+80% of those `r sum(!is.na(jan6$myPRISTOT))` defendants received `r quantile(jan6$myPRISTOT, probs = .8, na.rm =T)` months or less.  `r sum(jan6$myPRISTOT[!is.na(jan6$myPRISTOT)]==0)` of them received no prison time. The longest sentence so far is `r m2y(max(jan6$myPRISTOT, na.rm = T))`.
+
+<!-- ```{r histogram} -->
+<!-- ggplot(data = jan6, aes(x = myPRISTOT)) + -->
+<!--   labs(x = "Total Prison Time (Months)", y = "Cases") + -->
+<!--   geom_histogram(fill = 'gray', color = 'black', bins = length(unique(jan6$PRISTOT))) + -->
+<!--   theme_minimal() -->
+<!-- ``` -->
+
+
+Of the `r nrow(tfelony)` felony convictions, we have received and read the transcripts for `r sum(!is.na(tfelony$Assigned_Reader))`. We determined whether each offense was violent or destructive by reading the statement of offense or sentencing hearing transcript. By violence, we mean physical assault on a person. We do not consider threats alone to be violent. By destruction, we mean any damage to physical property.  `r sum(tfelony$violent, na.rm = T)` of the convictions are for a violent offense. `r paste(destructivenonviolent,ifelse(destructivenonviolent>1,"are","is"))` for a destructive, nonviolent offense. `r sum(tfelony$Count3A1.4, na.rm = T)` of the felony convictions resulted from plea agreements that contain a reservation about 3A1.4 note 4.
+
+```{r terrorhistogram, out.width = '100%',fig.align='right',fig.asp=.3, fig.cap = "Hover your mouse over a point to see defendant information. "}
+prisonPlot <- tfelony %>% 
+  group_by(myPRISTOT) %>%
+  mutate(count = row_number()) %>%
+  ungroup() %>%
+  ggplot(aes(x = myPRISTOT, 
+             y = count, 
+             color=`Violent or Destructive`,     
+         text = Name)) +
+  labs(x = "Total Prison Time (Months)", y = "", fill = "Violent or Destructive Offense") +
+  geom_point() +
+  theme_minimal() +
+  theme(plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank()) +
+  scale_x_continuous(breaks = seq(0,max(tfelony$myPRISTOT,na.rm = T),5)) +
+  scale_y_continuous(labels = NULL)
+
+prisonPlot %>%  
+  ggplotly(tooltip = "text") %>% 
+  config(displayModeBar = F) %>%
+  layout(legend = list(x = 0.8, y = .5))
+```
+
+A review of the sentencing hearing transcripts, and in some cases the sentencing memoranda, revealed the sentencing guidelines as stated by the court for `r sum(!is.na(tfelony[["Guidelines range (months)"]]))` of these cases. `r sum(tfelony$myPRISTOT== tfelony$lower,na.rm = T)` of them received a sentence at the bottom of the range and `r sum(tfelony$myPRISTOT< tfelony$lower, na.rm = T)` of them received a below-guidelines sentence.
+
+```{r fig.cap="Hover your mouse over a point to see defendant information. The gray lines represent the upper and lower bounds of the sentencing guidelies."}
+glPlot <- tfelony %>% 
+  ggplot() +
+  labs(y = "Total Prison Time (Months)", x = "Middle of Sentencing Guidelines", fill = "Violent or Destructive Offense") +
+  geom_point(aes(x = (upper+lower)/2, 
+                 y = myPRISTOT, 
+                 color=`Violent or Destructive`, 
+                 text = Name))+
+  geom_line(aes(x = (upper+lower)/2,y=lower), color = "gray") +
+  geom_line(aes(x = (upper+lower)/2,y=upper), color = "gray")
+
+glPlot %>% ggplotly(tooltip = "text")%>% 
+  config(displayModeBar = F) 
+```
+
+#### Notes on Individual Cases
+The cases for all the convicted and sentenced felons are below. Where available, click the defendant name for the transcript summary and the case number for the transcript itself. We found that Guy Reffitt's case was the only one where the government requested a terrorism enhancement. The judge denied hat request to avoid a sentencing disparity with the other capitol breach cases, since no others have received a terrorism enhancement. The cases whose sentencing hearings have contentious discussion about terrorism enhancements or sentencing trends for the January 6th cases are highlighted in red.
+```{r terrortable}
+tfelony <- tfelony %>% arrange(Name)
+Highlight <- which(tfelony$Highlight)
+tfelony %>%
+  transmute(Name = ifelse(is.na(Summary), Name, cell_spec(Name, "html", link = Summary, new_tab = TRUE)),
+            `Case Number` = ifelse(is.na(`Transcript Location`),`Case Number`, cell_spec(`Case Number`, "html", link = `Transcript Location`, new_tab = TRUE)),
+            Violent, Destructive, 
+            `3A1.4` = case_when(is.na(Count3A1.4)~"",
+                                TRUE ~ as.character(Count3A1.4)), 
+            `Prison Time` = myPRISTOT) %>%
+  kable("html", escape = FALSE) %>%
+  kable_styling(bootstrap_options = c("hover", "condensed", "striped"))  %>%
+  row_spec(Highlight, bold = T, color = "white", background = "red")%>%
+  scroll_box(height = "300px")
+```
+
+#### Plea Agreements
+Of `r nrow(myPleaAgreements)` plea agreements listed for Capitol Breach Cases on the DOJ website, `r sum(myPleaAgreements[["Reserved 3A1.4"]] > 0)` include language reserving the right of the government to request an upward departure pursuant to USSC Guidelines Manual Section 3A1.4 note 4. To the best of our knowledge, the government exercised this right in only one case. `r sum(myPleaAgreements[["Reserved 3A1.4"]] > 0 & myPleaAgreements[["Felony Conviction"]])` of the pleas with this reservation resulted in a felony conviction.
+```{r echo=FALSE, warning=FALSE}
+
+myPleaAgreements %>% 
+  ggplot(aes(x = `Reserved 3A1.4`, fill = `Offense Level`, group = `Offense Level`)) +
+  geom_bar()
+
+
+```
+
+```{r, echo = FALSE, warning=FALSE}
+pleaSummary
+```
+```{r}
+myPleaAgreements %>% dplyr::rename(Disposition = DISPmax) %>%
+  DT::datatable( 
+    filter = 'top',
+    options = list(dom = 'Bfrtip', 
+                   filter = 'top'))
+```
+
+<!-- ### Subsets -->
+<!-- Only `r nrow(lookup)` defendants received a prison sentence that is longer than the lower end of the maximum possible sentence range for their most serious charge. Here are those cases. -->
+<!-- ```{r Guidelines} -->
+<!-- lookup %>% auto_width() -->
+<!-- ``` -->
+
+<!-- The following `r nrow(noDisp)` cases have not reached a disposition. They are arranged by filing date (oldest to newest). -->
+<!-- ```{r NoDisp} -->
+<!-- noDisp %>%  -->
+<!--   transmute(Name = `Full legal name`, -->
+<!--             Docket = docketNumber,  -->
+<!--             State = `Location: state`, -->
+<!--             `Filing Date` = format.Date(as.Date(FILEDATE),"%m/%d/%Y"), -->
+<!--             `Filing Offenses`) %>% -->
+<!--   auto_width() %>% scroll_box(height = "300px") -->
+<!-- ``` -->

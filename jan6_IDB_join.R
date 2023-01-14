@@ -1,9 +1,11 @@
 library(haven)
 library(stringr)
 library(googlesheets4)
-cr17to22_in <- "/home/sam/enhanced_sentencing/Inputs/cr17to22.sas7bdat"
-cr20to22 <- read_sas(cr17to22_in) %>% 
-  filter(FILEDATE > as.Date("2020-01-01")) 
+inputs <- dir("/home/sam/Projects/RichardDefense/enhanced_sentencing/Inputs",pattern = "cr2[0-2]\\.sas7bdat", full.names = T)
+
+cr20to22 <- inputs %>%
+  lapply(read_sas) %>%
+  bind_rows()
 
 cr20to22DC <- cr20to22 %>%
   filter(DISTRICT == "90") %>%
@@ -17,6 +19,10 @@ jan6_idb <- df %>%
          sentenced = SENTDATE > as.Date("1900-01-01")) # dummy variable for sentenced
 
 disps <- jan6_idb[, grepl("DISP[0-9]", names(jan6_idb))]
+FOFFLVL <- jan6_idb[,grepl("FOFFLVL",names(jan6_idb))]
+jan6_idb$Felony <- apply(FOFFLVL,1,function(x){ifelse(sum(is.na(x))==5,NA,4 %in% x)})
+
+
 
 jan6_idb$relevantDisp <- apply(disps,1,function(x){
   x <- as.vector(x)
@@ -43,13 +49,14 @@ relevantTitleCases <- jan6_idb %>% filter(relevantTitle)
 relevantFilingCases <- jan6_idb %>%
   filter(relevantFiling) %>%
   filter(terminated)
-googledrive::drive_ls()
-gs4_create(paste0("January 6 cases as of ", Sys.Date()), sheets = c("Source data", "Relevant Charges & Disps", "Relevant Disps", "Relevant Filings", "Relevant Charges"))
-googledrive::drive_mv(file = "1Uib3M6B7PYW6PZaOPZjhivzwJgE-bz2VqF5NSD9wmS0", path = "1ypbLLn8kiymTMUFgSJ96B9nIEqivd0CX")
+# googledrive::drive_ls()
+# gs4_create(paste0("January 6 cases as of ", Sys.Date()), sheets = c("Source data", "Relevant Charges & Disps", "Relevant Disps", "Relevant Filings", "Relevant Charges"))
+# googledrive::drive_mv(file = "1Uib3M6B7PYW6PZaOPZjhivzwJgE-bz2VqF5NSD9wmS0", path = "1ypbLLn8kiymTMUFgSJ96B9nIEqivd0CX")
+
 jan6_idb %>% sheet_write(ss = "1Uib3M6B7PYW6PZaOPZjhivzwJgE-bz2VqF5NSD9wmS0", sheet = "Source data")
 
 relevantCases %>%
-  select(Name, `Case Number`, `Charge(s)`, TYPEREG, DOCKET, FISCALYR, FILEDATE, TERMDATE,
+  select(Name, `Case Number`, `Charge(s)`, Felony, TYPEREG, DOCKET, FISCALYR, FILEDATE, TERMDATE,
          FTITLE1, FTITLE2, FTITLE3, FTITLE4, FTITLE5,
          TTITLE1, TTITLE2, TTITLE3, TTITLE4, TTITLE5,
          DISP1, DISP2, DISP3, DISP4,
@@ -62,20 +69,20 @@ relevantCases %>%
   sheet_write(ss = "1Uib3M6B7PYW6PZaOPZjhivzwJgE-bz2VqF5NSD9wmS0", sheet = "Relevant Charges & Disps")
 
 relevantDispCases %>%
-  select(Name, `Case Number`, `Charge(s)`, TYPEREG, DOCKET, FISCALYR, FILEDATE, TERMDATE,
+  select(Name, `Case Number`, `Charge(s)`, Felony, TYPEREG, DOCKET, FISCALYR, FILEDATE, TERMDATE,
          FTITLE1, FTITLE2, FTITLE3, FTITLE4, FTITLE5,
          TTITLE1, TTITLE2, TTITLE3, TTITLE4, TTITLE5,
          DISP1, DISP2, DISP3, DISP4,
-         PRISTIM1, PRISTIM2, PRISTIM3, PRISTIM4, PRISTIM5,
+         PRISTOT, PRISTIM1, PRISTIM2, PRISTIM3, PRISTIM4, PRISTIM5,
          FSEV1, FSEV2, FSEV3, FSEV4, FSEV5,
          FOFFLVL1, FOFFLVL2, FOFFLVL3, FOFFLVL4, FOFFLVL5,
          TSEV1, TSEV2, TSEV3, TSEV4, TSEV5,
          TOFFLVL1, TOFFLVL2, TOFFLVL3, TOFFLVL4, TOFFLVL5
   ) %>%
-  sheet_write(ss = "1Uib3M6B7PYW6PZaOPZjhivzwJgE-bz2VqF5NSD9wmS0", sheet = "Relevant Disps")
+  sheet_write(ss = "1Uib3M6B7PYW6PZaOPZjhivzwJgE-bz2VqF5NSD9wmS0", sheet = "Convicted or Pleaded Guilty")
 
 relevantFilingCases %>%
-  select(Name, `Case Number`, `Charge(s)`, TYPEREG, DOCKET, FISCALYR, FILEDATE, TERMDATE,
+  select(Name, `Case Number`, `Charge(s)`, Felony, TYPEREG, DOCKET, FISCALYR, FILEDATE, TERMDATE,
          FTITLE1, FTITLE2, FTITLE3, FTITLE4, FTITLE5,
          TTITLE1, TTITLE2, TTITLE3, TTITLE4, TTITLE5,
          DISP1, DISP2, DISP3, DISP4,
@@ -87,18 +94,7 @@ relevantFilingCases %>%
   ) %>%
   sheet_write(ss = "1Uib3M6B7PYW6PZaOPZjhivzwJgE-bz2VqF5NSD9wmS0", sheet = "Relevant Filings")
 
-relevantTitleCases %>%
-  select(Name, `Case Number`, `Charge(s)`, TYPEREG, DOCKET, FISCALYR, FILEDATE, TERMDATE,
-         FTITLE1, FTITLE2, FTITLE3, FTITLE4, FTITLE5,
-         TTITLE1, TTITLE2, TTITLE3, TTITLE4, TTITLE5,
-         DISP1, DISP2, DISP3, DISP4,
-         PRISTIM1, PRISTIM2, PRISTIM3, PRISTIM4, PRISTIM5,
-         FSEV1, FSEV2, FSEV3, FSEV4, FSEV5,
-         FOFFLVL1, FOFFLVL2, FOFFLVL3, FOFFLVL4, FOFFLVL5,
-         TSEV1, TSEV2, TSEV3, TSEV4, TSEV5,
-         TOFFLVL1, TOFFLVL2, TOFFLVL3, TOFFLVL4, TOFFLVL5
-  ) %>%
-  sheet_write(ss = "1Uib3M6B7PYW6PZaOPZjhivzwJgE-bz2VqF5NSD9wmS0", sheet = "Relevant Charges")
+
 
 PRISTIM <- jan6_idb[,grepl("PRISTIM",names(jan6_idb))]
 
@@ -116,41 +112,3 @@ jan6_idb[rev(order(apply(PRISTIM, 1, max, na.rm = T))),] %>%
          TOFFLVL1, TOFFLVL2, TOFFLVL3, TOFFLVL4, TOFFLVL5
   ) %>%
   sheet_write(ss = "1Uib3M6B7PYW6PZaOPZjhivzwJgE-bz2VqF5NSD9wmS0", sheet = "Longest Single Sentences")
-
-=======
-library(dplyr)
-
-setwd('/home/sam/Projects/RichardDefense/enhanced_sentencing')
-cr17to22_in <- "Inputs/cr17to22.sas7bdat"
-
-source("jan6.R")
-
-df <- df %>%
-  within({
-    DOCKET <- paste0(`Case Number` %>% str_remove_all("^.*\\:") %>% str_remove_all("-.*$"),
-                     `Case Number` %>% str_remove_all("^.*-") %>% str_pad(5, "left", "0"))
-    
-    DOCKET[nchar(DOCKET) < 7] <- paste0("2",DOCKET[nchar(DOCKET) < 7])
-    DOCKET[nchar(DOCKET) > 7] <- NA
-    
-  })
-
-
-DCidb <- cr17to22_in %>%
-  read_sas() %>% 
-  filter(FILEDATE > as.Date("2021-01-01")) %>%
-  arrange(paste(DISTRICT, DOCKET, OFFICE),
-          desc(LOADDATE)) %>%
-  filter(!duplicated(paste(DISTRICT, DOCKET, OFFICE))) %>% 
-  filter(DISTRICT == "90" & OFFICE == "1")
-
-
-jan6_idb <- df %>% 
-  filter(grepl("cr",tolower(`Case Number`))) %>%
-  left_join(DCidb)
-
-jan6_idb$PRISTOT[jan6_idb$PRISTOT== -8] <- NA
-jan6_idb$SENTDATE[jan6_idb$SENTDATE<as.Date("2000-01-01")] <- NA
-jan6_idb$SENTDATE %>% is.na %>% table
-jan6_idb$PRISTOT %>% is.na %>% table
->>>>>>> cde2a262fffa76910c95b9cf1e9a34cf7c1698a2

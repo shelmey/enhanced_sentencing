@@ -2,25 +2,37 @@ library(httr)
 library(dplyr)
 library(stringr)
 library(googlesheets4)
-tPP_sheet <- "https://docs.google.com/spreadsheets/d/1jSN5ueyn5UpgUwnjEIOJumQst7VIjuou6qrgHCNuhIM/edit"
-df<- read_sheet(tPP_sheet)
-df$Federal[df$`Case ID` == "08282020_BMS"] <- "Non-Federal" 
-federal <- df %>% filter(Federal == "Federal")
-federal <- federal %>% filter(!`Case ID` %in% c("07242020_RBH"))
-federal$`Full legal name`[federal$`Full legal name`=="Rebecca Gonzales-Mota"] <- "Rebecca Mota Gonzalez"
-myToken <- "b22efa2b23592979fa0fef3735a356df4c3723f9"
 
+mySheet <- "1g_kBPD5BiAf0hhXjjLgJojgJy_1_HKOO--YkIRZJ_nA"
+old_tPP_sheet <- "https://docs.google.com/spreadsheets/d/1jSN5ueyn5UpgUwnjEIOJumQst7VIjuou6qrgHCNuhIM/edit"
 
 Courts <- read.csv("courts.csv", stringsAsFactors = F, strip.white = T)
 dc_codes <- read.csv("districts.csv", stringsAsFactors = F, strip.white = T)
 dc_codes$court <-paste("District Court,", dc_codes$short_name)
 FD <- Courts %>% filter(jurisdiction == "FD")
 
+df <- read_sheet(old_tPP_sheet, "Federal Cases w Docket Numbers")
+df$Federal[df$`Case ID` == "08282020_BMS"] <- "Non-Federal" 
+feds <- df %>% filter(Federal == "Federal")
+feds <- feds %>% filter(!`Case ID` %in% c("07242020_RBH"))
+feds$`Full legal name`[feds$`Full legal name`=="Rebecca Gonzales-Mota"] <- "Rebecca Mota Gonzalez"
+
+feds <- feds %>% select(`Case ID`, docketNumber, District)
+
+tPP <- read_sheet(mySheet, "Source data")
+
+federal <- tPP %>% filter(federal)
+
+# table(df$`Case ID` %in% tPP$Case.ID)
+federal <- federal %>% left_join(feds)
+# tPP$terror <- grepl("terror",tolower(paste(tPP$Additional.details,tPP$Short.narrative)))
+cached <- federal %>% filter(!is.na(docketNumber))
+federal <- federal %>% filter(is.na(docketNumber))
 
 allResults = NULL
 
 # federal$`Location: state`[!federal$`Location: state` %in% state.name]
-for(n in 1:251){
+for(n in 3:nrow(federal)){
 myState <- federal$`Location: state`[n]
 myDefendant <- federal$`Full legal name`[n]
 myDefendantFL <- paste(str_remove(federal$`First name`[n], " .*$"),federal$`Family name`[n])
@@ -81,7 +93,7 @@ defendants <- lapply(respContent$results, function(R1)unlist(R1$party[unlist(R1$
 resultsDF$defendant = defendants
 
 resultsDF$`Case ID` <- federal$`Case ID`[n]
-
+if(nrow(resultsDF)>0){
 resultsDF <- resultsDF %>%
   within({
     CR = str_detect(docketNumber, "-cr-")
@@ -93,7 +105,7 @@ resultsDF <- resultsDF %>%
           desc(CR),
           desc(terminated))
 
-allResults <- bind_rows(allResults,resultsDF)
+allResults <- bind_rows(allResults,resultsDF)}
  }
 
 allResults %>% select(-defendant) %>% write.csv("all results.csv", row.names = F)
@@ -102,12 +114,16 @@ allResults <- allResults %>% left_join(select(dc_codes, court, Code))
 
 topResults <- allResults %>% filter(!duplicated(`Case ID`))
 
-myFeds <- federal %>% left_join(select(topResults, `Case ID`, docketNumber, District = Code))
-myFeds %>% select(-defendant) %>% write.csv(paste0("tPP Federal Cases w docketNumber ",Sys.Date(),".csv"), row.names = F)
-table(myFeds$DOCKET == myFeds$docketNumber)
+myFeds <- federal %>% 
+  select(-District) %>%
+  left_join(select(topResults, `Case ID`, docketNumber2 = docketNumber, District = Code)) %>%
+  mutate(docketNumber = coalesce(docketNumber, docketNumber2)) %>% 
+  select(-docketNumber2) %>% 
+  rbind(cached)
 
-sheet_write(myFeds, tPP_sheet, "Federal Cases w Docket Numbers")
 
-federal$`Case ID`[duplicated(federal$`Case ID`)]
-table(federal$DOCKET[2:13]==topResults$docketNumber)
-bad <- federal[2:13,][federal$DOCKET[2:13]!=topResults$docketNumber,]
+sheet_write(myFeds, mySheet, "Federal Cases w Docket Numbers")
+
+# federal$`Case ID`[duplicated(federal$`Case ID`)]
+# table(federal$DOCKET[2:13]==topResults$docketNumber)
+# bad <- federal[2:13,][federal$DOCKET[2:13]!=topResults$docketNumber,]

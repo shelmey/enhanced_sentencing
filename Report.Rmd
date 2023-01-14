@@ -2,22 +2,35 @@
 title: "Dispositions and sentences of federal felony cases related to protests in the Summer and Fall of 2020"
 output: html_document
 ---
-
+<style>
+p.caption {
+  font-size: 0.8em;
+}
+</style>
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 knitr::opts_chunk$set(warning = FALSE)
+# setwd("Projects/RichardDefense/enhanced_sentencing")
+minimums_in <- "Inputs/mandatory_minimums.csv"
 
 library(googlesheets4)
 library(dplyr)
 library(ggplot2)
 library(scales)
 library(kableExtra)
+library(plotly)
+library(stringr)
+
+courts <- read.csv("courts.csv", stringsAsFactors = F, strip.white = T) %>% 
+  select(court_id = id, court_full_name = full_name, Court = short_name, DISTRICT = fjc_court_id) %>% 
+  filter(!duplicated(DISTRICT))
 
 m2y <- function(x){
   y = x%/%12
   m = x-(12*y)
-  paste(y, "years and", m, "months")
+  paste(y, "years", ifelse(m>0, paste0(" and", m, "months"),""))
 }
+
 auto_width <- function(x){
     myKable <- x %>% kable %>% kable_styling("striped") 
   for (n in 1:length(x)) {
@@ -26,39 +39,36 @@ auto_width <- function(x){
   return(myKable)
   }
 
-tPP_sheet <- "https://docs.google.com/spreadsheets/d/1jSN5ueyn5UpgUwnjEIOJumQst7VIjuou6qrgHCNuhIM/edit"
-alltPP <- read_sheet(tPP_sheet)
-feds <- alltPP$Federal == "Federal"
-tPP <- tPP_sheet %>% read_sheet("Federal Cases w IDB cols 20220616")
+tPP_sheet <- "1g_kBPD5BiAf0hhXjjLgJojgJy_1_HKOO--YkIRZJ_nA"
+alltPP <- read_sheet(tPP_sheet, "Source data working") %>%
+  filter(!grepl("Carrillo",`Full legal name`))
+tPP <- tPP_sheet %>% read_sheet("Source data")   %>%
+  filter(!grepl("Carrillo",`Full legal name`))
 
-# Jan 6 cases
-source("jan6.R")
+tPP <- tPP %>% left_join(courts)
 
-df <- df %>%
+fc2 <- tPP_sheet %>% read_sheet("Felony Convictions 2") %>%
+  filter(!grepl("Carrillo",`Full legal name`))%>%
   within({
-    DOCKET <- paste0(`Case Number` %>% str_remove_all("^.*\\:") %>% str_remove_all("-.*$"),
-                     `Case Number` %>% str_remove_all("^.*-") %>% str_pad(5, "left", "0"))
+    violent <- Violent
+    destructive <- Destructive
+    Destructive <- case_when(is.na(Destructive) ~ "",
+                             !is.na(Destructive) & Destructive ~ "Yes",
+                             !is.na(Destructive) & !Destructive ~ "No")
+    Violent <- case_when(is.na(Violent) ~ "",
+                             !is.na(Violent) & Violent ~ "Yes",
+                             !is.na(Violent) & !Violent ~ "No")
+    # destructive[is.na(destructive)] <- FALSE
+    # violent[is.na(violent)] <- FALSE
     
-    DOCKET[nchar(DOCKET) < 7] <- paste0("2",DOCKET[nchar(DOCKET) < 7])
-    DOCKET[nchar(DOCKET) > 7] <- NA
+    # destructive[is.na(`Assigned Reader`)] <- NA 
+    # violent[is.na(`Assigned Reader`)] <- NA 
     
+    `Violent or Destructive` <- violent | destructive
   })
 
 
-DCidb <- cr17to22_in %>%
-  read_sas() %>% 
-  filter(FILEDATE > as.Date("2021-01-01")) %>%
-  arrange(paste(DISTRICT, DOCKET, OFFICE),
-          desc(LOADDATE)) %>%
-  filter(!duplicated(paste(DISTRICT, DOCKET, OFFICE))) %>% 
-  filter(DISTRICT == "90" & OFFICE == "1")
 
-
-jan6_idb <- df %>% 
-  filter(grepl("cr",tolower(`Case Number`))) %>%
-  left_join(DCidb)
-
-rm(df)
 
 # Sentencing Guidelines from FJC IDB codebook
 guidelines <- 
@@ -113,8 +123,14 @@ tPP$PTSEVh <- tPPguidelines[,grepl("T",names(tPPguidelines)) & grepl("high",name
 tPP$PTSEVh[is.infinite(tPP$PTSEVh)] <- NA
 tPP$PTSEVl <- tPPguidelines[,grepl("T",names(tPPguidelines)) & grepl("low",names(tPPguidelines))] %>%
   apply(1, max, na.rm = T)
-tPP$PTSEVl[is.infinite(tPP$PTSEVl)] <- NA
+tPP$PTSEVL <- tPPguidelines[,grepl("T",names(tPPguidelines)) & grepl("low",names(tPPguidelines))] %>%
+  apply(1, min, na.rm = T)
+
+
+tPP$PTSEVL[is.infinite(tPP$PTSEVL)] <- NA
 tPP <- tPP %>% cbind(PSEV)
+
+
 
 # Replace the negative numbers representing NA values with NA 
 tPP$PRISTOT <- ifelse(tPP$PRISTOT %in% c(-3,-8), NA, tPP$PRISTOT)
@@ -140,19 +156,41 @@ tPP[,grepl("FOFFLVL", names(tPP))] <- FOFFLVL
 DISP <- tPP[, grepl("DISP[0-9]", names(tPP))] %>% 
   mutate_all(function(x)case_when(x == -8 ~ NA_character_, is.na(x) ~ NA_character_, x == 4 ~ "Convicted/final plea of guilty", x == 1 ~ "Dismissed", x == 15 ~ "Dismissed without prejudice", x == 9 ~ "Convicted by jury after trial", x == 2 ~ "Acquitted by court", x == 9 ~ "Convicted by jury after trial", x == 11 ~ "Nolle prosequi", TRUE ~ as.character(x)) %>% factor(ordered = TRUE, levels = c("Convicted by jury after trial", "Convicted/final plea of guilty", "Acquitted by court", "Nolle prosequi", "Dismissed without prejudice", "Dismissed")))
 
+
+minimums <- minimums_in %>% read.csv(stringsAsFactors = F, strip.white = T)
+
+myMinimums <- minimums$STATUTE...U.S..SENTENCING.GUIDELINES.PROVISION %>% 
+  str_replace_all(" USC § ",":") %>%
+  toupper() %>%
+  str_replace_all("\\).*$","") %>%
+  str_replace_all("\\(","")
+
+ttitles <- tPP[, grepl("TTITLE[0-9]", names(tPP))]
+tPP$ttitles <- apply(ttitles,1,function(x)paste(unique(x[x!="-8"]),collapse = ", "))
+minMat <- apply(ttitles, 2, function(x)unlist(lapply(x,function(y)str_replace_all(y,"\\..*$","") %in% myMinimums))) & apply(DISP,2,function(x)grepl("Convicted",x))
+
+tPP$TMin <- rowSums(minMat)>0
+
 tPP$DISPmax <-  apply(DISP, 1, function(x){x[order(x)][1]})
 
 FTITLE <- tPP[,grepl("FTITLE", names(tPP))] %>%
   mutate_all(function(x)ifelse(x==-8,NA,x))
 
-lookup <- tPP %>% 
-  filter(PRISTOT > PTSEVl) %>% 
-  select(Name = `Full legal name`, 
-         Docket = docketNumber, 
-         State = `Location: state`, 
-         `Prison Time (Months)` = PRISTOT, 
-         `Guidelines Lower Bound` = PTSEVl,
-         `Guidelines Upper Bound` = PTSEVh)
+tPP$Below_Guidelines <- tPP$PRISTOT < tPP$PTSEVL
+tPP$FFelony <- apply(FOFFLVL,1,function(x)4 %in% x)
+TOFFLVL <- tPP[,grepl("TOFFLVL", names(tPP))]
+TFelony <- TOFFLVL == 4 & apply(DISP,2,function(x)grepl("Convicted",x))
+tPP$TFelony <- apply(TFelony,1,sum)>0
+felonies <- tPP %>% filter(FFelony)
+# lookup <- tPP %>% 
+#   filter(Tfelony & TTerror) %>%
+#   filter(!Below_Guidelines) %>% 
+#   select(Name = `Full legal name`, 
+#          Docket = docketNumber, 
+#          State = `Location: state`, 
+#          `Prison Time (Months)` = PRISTOT, 
+#          `Guidelines Lower Bound` = PTSEVl,
+#          `Guidelines Upper Bound` = PTSEVh)
 tPP$`Filing Offenses` <- tPP[,grepl("FTITLE", names(tPP))] %>%
   apply(1, function(x){
     x <- x[!is.na(x) & x !=-8]
@@ -163,19 +201,35 @@ hasDisp$DISP1 %>% table
 noDisp <- notSentenced %>% filter(is.na(DISP1)|DISP1==-8)
 noDisp$FILEDATE %>% summary
 noDisp <- noDisp %>% arrange(FILEDATE)
+
+# Get the max sentence for each case
+tPP$myPRISTOT <- apply(tPP[,grepl("PRISTIM",names(tPP))],1,max, na.rm = T)
+tPP$myPRISTOT[tPP$myPRISTOT==-1] <- 0  
+tPP$myPRISTOT[tPP$myPRISTOT<0] <- NA  
+
+fc2 <- fc2 %>%
+  left_join(select(tPP, `Full legal name`, myPRISTOT, TMin, ttitles, Court)) 
+
+
+fc2 <- fc2 %>%
+  mutate(lower = `Guidelines range (months)` %>% str_remove(" to.*$") %>% as.numeric(),
+         upper = `Guidelines range (months)` %>% str_remove("^.*to ") %>% as.numeric())
+myline = cbind.data.frame(x = c(0,125), y = c(0,125))
+
 ```
 
 ## Data
 
-The [data for this report](https://docs.google.com/spreadsheets/d/1jSN5ueyn5UpgUwnjEIOJumQst7VIjuou6qrgHCNuhIM) are from two sources. The population of cases was identified using The Prosecution Project's (tPP) [dataset of summer/fall 2020 protest-related felony cases](https://theprosecutionproject.org/summer-2020-protests/). This lists `r format(nrow(alltPP), big.mark = ",")` cases, `r sum(feds, na.rm = T)` of which are federal. This list is not comprehensive. The Prosecution Project occasionally adds cases to it.
+The [data for this report](https://docs.google.com/spreadsheets/d/1g_kBPD5BiAf0hhXjjLgJojgJy_1_HKOO--YkIRZJ_nA/edit?usp=sharing) are from two sources. The population of cases was identified using The Prosecution Project's (tPP) [dataset of summer/fall 2020 protest-related felony cases](https://theprosecutionproject.org/summer-2020-protests/). This lists `r format(nrow(alltPP), big.mark = ",")` cases, `r nrow(tPP)` of which are federal. This list is not comprehensive. The Prosecution Project occasionally adds cases to it. It was last updated on July 13, 2022.
 
-The source for information on sentencing is [the Federal Judicial Center's  (FJC) Integrated Database (IDB)](https://www.fjc.gov/research/idb). The last update to the criminal defendants dataset was on March 31, 2022.
+The source for information on sentencing is [the Federal Judicial Center's  (FJC) Integrated Database (IDB)](https://www.fjc.gov/research/idb). It includes dispositions through September 2022.
 
+`r sum(!is.na(tPP$DEFNO))` of the federal offenders were matched to IDB data. 28 offenders without felony convictions were not matched because they have a co-defendant and the correct IDB record could not be determined without reviewing the docket individually. `r sum(is.na(tPP$DEFNO) & tPP$TYPEREG != "CR" & !is.na(tPP$TYPEREG))` offenders were not matched because they did not have a criminal docket. This leaves `r sum(is.na(tPP$DEFNO) & !is.na(tPP$TYPEREG) & tPP$TYPEREG == "CR")-28` criminal offenders whose cases could not be successfully matched to an IDB record, and whose disposition could not be confirmed. 
 
-## Method
-The 5 year snapshot for [Criminal defendants filed, terminated, and pending from FY 1996 to present](https://www.fjc.gov/research/idb/criminal-defendants-filed-terminated-and-pending-fy-1996-present) was downloaded and filtered to cases filed after January 1, 2020.
+<!-- ## Method -->
+<!-- The 5 year snapshot for [Criminal defendants filed, terminated, and pending from FY 1996 to present](https://www.fjc.gov/research/idb/criminal-defendants-filed-terminated-and-pending-fy-1996-present) was downloaded and filtered to cases filed after January 1, 2020. -->
 
-The docket number and FJC court identifier for each federal case was retrieved using a query of the [Court Listener API](https://www.courtlistener.com/api/rest-info/), based on the full legal names and case locations in the dataset from the Prosecution Project. The docket number, district court ID, and court office ID were combined to form a unique case identifier that matches the FJC data. The FJC variables related to charges, dispositions, and sentencing were merged to the population of federal cases, matching on this identifier.        
+<!-- The docket number and FJC court identifier for each federal case was retrieved using a query of the [Court Listener API](https://www.courtlistener.com/api/rest-info/), based on the full legal names and case locations in the dataset from the Prosecution Project. The docket number, district court ID, and court office ID were combined to form a unique case identifier that matches the FJC data. The FJC variables related to charges, dispositions, and sentencing were merged to the population of federal cases, matching on this identifier.         -->
 
 ## Summary
 ### Frequency of filing offenses
@@ -188,9 +242,12 @@ Offenses %>% auto_width() %>% scroll_box(height = "300px")
 # FTITLE %>% apply(1,function(x)sum(!is.na(x))) %>% table
 ```
 ### Dispositions
-`r sum(is.na(tPP$DISPmax))` cases do not have a recorded disposition. They are likely still awaiting an outcome, or have not been updated yet. The harshest dispositions for the other `r sum(!is.na(tPP$DISPmax))` cases are as follows.
+
+`r nrow(felonies)` of the defendants we matched to IDB records are associated with a felony complaint.  
+`r sum(is.na(felonies$DISPmax))` of these cases do not have a recorded disposition. They are likely still awaiting an outcome, or have not been updated yet. The harshest dispositions for the other `r sum(!is.na(felonies$DISPmax))` cases are below. 
 ```{r disp}
-tPP %>% filter(!is.na(DISPmax)) %>% group_by(Disposition = DISPmax) %>% summarise(Frequency = n()) %>%
+felonies %>% 
+  filter(!is.na(DISPmax)) %>% group_by(Disposition = DISPmax) %>% summarise(Frequency = n()) %>%
   ggplot(aes(x="", y=Frequency, fill=Disposition)) +
   geom_bar(stat="identity", width=1) +
   coord_polar("y", start=0) +
@@ -205,29 +262,122 @@ tPP %>% filter(!is.na(DISPmax)) %>% group_by(Disposition = DISPmax) %>% summaris
 
 ### Sentences
 
-`r sum(tPP$SENTDATE > as.POSIXct(as.Date("1900-01-01")), na.rm = T)` cases have a recorded Sentencing Date. `r sum(!is.na(tPP$PRISTOT))` of those have a non-missing value for total prison time (including 0). 90% of those `r sum(!is.na(tPP$PRISTOT))` defendants received `r quantile(tPP$PRISTOT, probs = .9, na.rm =T)` months or less.  `r sum(tPP$PRISTOT[!is.na(tPP$PRISTOT)]==0)` of them received no prison time. The longest sentence so far is `r m2y(max(tPP$PRISTOT, na.rm = T))`.
+`r sum(tPP$SENTDATE > as.POSIXct(as.Date("1900-01-01")), na.rm = T)` cases have a recorded Sentencing Date. `r sum(!is.na(tPP$PRISTOT))` of those have a non-missing value for total prison time (including 0). 90% of those `r sum(!is.na(tPP$PRISTOT))` defendants received `r quantile(tPP$PRISTOT, probs = .9, na.rm =T)` months or less.  `r sum(tPP$PRISTOT[!is.na(tPP$PRISTOT)]==0)` of them received no prison time. The longest sentence so far is `r m2y(max(tPP$PRISTOT, na.rm = T))`. The sentences for the `r sum(tPP$TFelony)` defendants convicted of felony offenses are represented below.
 
-```{r histogram}
-ggplot(data = tPP, aes(x = PRISTOT)) +
-  labs(x = "Total Prison Time (Months)", y = "Cases") +
-  geom_histogram(fill = 'gray', color = 'black', bins = length(unique(tPP$PRISTOT))) +
-  theme_minimal()
+```{r histogram, fig.cap="Hover your mouse over a point to see defendant information. Points with a black outline represent defendants convicted of one of the same offenses as Richard. Defendants convicted of an offense with a mandatory minimum are represented as triangles."}
+# ggplot(data = tPP, aes(x = PRISTOT#, fill = Below_Guidelines, group = Below_Guidelines
+#                        )) +
+#   labs(x = "Total Prison Time (Months)", y = "Cases") +
+#   geom_histogram(fill = "gray", color = 'black', bins = length(unique(tPP$PRISTOT))) +
+#   theme_minimal() #+ labs(fill='Below Guidelines')
+
+prisonPlot <- tPP %>% filter(TFelony) %>%
+  mutate(Terror = `Full legal name` %in% fc2$`Full legal name`[fc2$TTerror],
+         Richard = `Full legal name` %in% fc2$`Full legal name`[fc2$TRH]) %>%
+  group_by(myPRISTOT) %>%
+  arrange(Terror, Richard) %>%
+  mutate(count = row_number()) %>%
+  ungroup() %>%
+  ggplot(aes(x = myPRISTOT, y = count, 
+             fill=Terror,
+             stroke = ifelse(Richard,.1,0),
+             shape  = TMin,
+             text = paste0(`Full legal name`, "\nMonths: ", myPRISTOT, "\nOffenses: ", ttitles,"\n", Court))) +
+  labs(x = "Total Prison Time (Months)", y = "", shape = "Mandatory Minimum", fill = "18:2332b(g)(5) Offense") +
+  geom_point(size = 1) +
+  theme_minimal() +
+  theme(plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank()) +
+  scale_x_continuous(breaks = seq(0,max(tPP$myPRISTOT,na.rm = T),50)) +
+  scale_y_continuous(labels = NULL) + 
+  guides(shape = "none") + 
+  scale_fill_brewer(type = "qual")
+
+prisonPlot %>%  
+  ggplotly(tooltip = "text") %>% 
+  # config(displayModeBar = F) %>%
+  layout(legend = list(x = 0.6, y = .5))
 ```
 
-### Subsets
-Only `r nrow(lookup)` defendants received a prison sentence that is longer than the lower end of the maximum possible sentence range for their most serious charge. Here are those cases. 
-```{r Guidelines}
-lookup %>% auto_width()
+### Terroristic offenses
+
+`r sum(fc2$TTerror, na.rm = T)` of these defendants have pleaded guilty to and been sentenced for an offense included in 18 USC § 2332b(g)(5). 80% of them received `r ceiling(quantile(tPP$myPRISTOT[tPP[["Full legal name"]] %in% fc2[["Full legal name"]][fc2$TTerror]], probs = .8, na.rm =T))` months or less.  `r sum(tPP$myPRISTOT[tPP[["Full legal name"]] %in% fc2[["Full legal name"]][fc2$TTerror]]==0)` of them received no prison time.
+```{r tdisp, fig.height=2.5, fig.cap="Hover your mouse over a point to see defendant information. Defendants convicted of an offense with a mandatory minimum are represented as triangles."}
+
+TerrorPlot <- fc2 %>% filter(TTerror) %>%
+  mutate(Richard = TRH) %>%
+  group_by(myPRISTOT) %>%
+  arrange(Richard) %>%
+  mutate(count = row_number()) %>%
+  ungroup() %>%
+  ggplot(aes(x = myPRISTOT, y = count, 
+             fill=Richard,
+             stroke = 0,
+             text = paste0(`Full legal name`, "\nMonths: ", myPRISTOT, "\nOffenses: ", ttitles, "\n", Court),
+             shape  = TMin,
+             group = Richard)) +
+  labs(x = "Total Prison Time (Months)", y = "", fill = "One of Richard's Plea Offenses") +
+  geom_point(size = 1) +
+  theme_minimal() +
+  theme(plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank()) +
+  # scale_x_continuous(breaks = seq(0,max(fc2$myPRISTOT,na.rm = T),50)) +
+  scale_y_continuous(labels = NULL)+
+  # scale_fill_manual(values = c("gray","lightgreen"))+ 
+  guides(shape = "none")+ 
+  scale_fill_brewer(type = "qual", palette = 2)
+
+TerrorPlot %>%  
+  ggplotly(tooltip = "text") %>% 
+  # config(displayModeBar = F) %>%
+  layout(legend = list(x = 0.6, y = .5))
+
 ```
 
-The following `r nrow(noDisp)` cases have not reached a disposition. They are arranged by filing date (oldest to newest).
-```{r NoDisp}
 
-noDisp %>% 
-  transmute(Name = `Full legal name`,
-            Docket = docketNumber, 
-            State = `Location: state`,
-            `Filing Date` = format.Date(as.Date(FILEDATE),"%m/%d/%Y"),
-            `Filing Offenses`) %>%
-  auto_width() %>% scroll_box(height = "300px")
+<!-- ```{r fig.cap="The gray lines represent the upper and lower bounds of the sentencing guidelies."} -->
+<!-- glPlot <- fc2 %>%  -->
+<!--   ggplot() + -->
+<!--   labs(y = "Total Prison Time (Months)", x = "Middle of Sentencing Guidelines", fill = "Violent or Destructive Offense") + -->
+<!--   geom_point(aes(x = (upper+lower)/2, y = myPRISTOT, color=`Violent or Destructive`, text = `Full legal name`))+ -->
+<!--   geom_line(aes(x = (upper+lower)/2,y=lower), color = "gray") + -->
+<!--   geom_line(aes(x = (upper+lower)/2,y=upper), color = "gray") -->
+
+<!-- glPlot %>% ggplotly(tooltip = "text")%>%  -->
+<!--   config(displayModeBar = F)  -->
+<!-- ``` -->
+
+Based on our research, Michael Solomon and Benjamin Teeter are the only defendants in whose case the prosecutor requested a terrorism enhancement. They are "Boogaloo Bois" who intended to engage in arms trafficking to aid a foreign terrorist organization. They cooperated extensively with federal officers after their arrest, and the judge denied the requests for a terrorism enhancement.
+
+The cases for all the convicted and sentenced felons are below. Where available, click the defendant name for the transcript summary and the case number for the transcript itself.
+
+```{r terrortable}
+fc2 <- fc2 %>% arrange(`Full legal name`)
+# Highlight <- which(fc2$Highlight)
+fc2 %>% filter(TTerror) %>%
+  transmute(Name = ifelse(is.na(Summary), `Full legal name`, cell_spec(`Full legal name`, "html", link = Summary, new_tab = TRUE)),
+            `Case Number` = ifelse(is.na(`Transcript`),docketNumber, cell_spec(docketNumber, "html", link = `Transcript`, new_tab = TRUE)),
+            Violent, Destructive, 
+            `Richard Plea Offense` = TRH,
+            # `3A1.4` = case_when(is.na(Count3A1.4)~"",
+            #                     TRUE ~ as.character(Count3A1.4)), 
+            `Prison Time` = myPRISTOT) %>%
+  kable("html", escape = FALSE) %>%
+  kable_styling(bootstrap_options = c("hover", "condensed", "striped"))  %>%
+  # row_spec(Highlight, bold = T, color = "white", background = "red")%>%
+  scroll_box(height = "300px")
 ```
+
+<!-- The following `r nrow(noDisp)` cases have not reached a disposition. They are arranged by filing date (oldest to newest). -->
+<!-- ```{r NoDisp} -->
+
+<!-- noDisp %>%  -->
+<!--   transmute(Name = `Full legal name`, -->
+<!--             Docket = docketNumber,  -->
+<!--             State = `Location: state`, -->
+<!--             `Filing Date` = format.Date(as.Date(FILEDATE),"%m/%d/%Y"), -->
+<!--             `Filing Offenses`) %>% -->
+<!--   auto_width() %>% scroll_box(height = "300px") -->
+<!-- ``` -->
