@@ -26,6 +26,7 @@ plea_agreements <- Plea_Agreements %>%
   select(Name, Count3A1.4) %>%
   left_join(Source_Data)
 
+
 FOFFLVL <- plea_agreements[,grepl("FOFFLVL", names(plea_agreements))] %>%
   mutate_all(function(x)ifelse(x<0,NA,x))
 
@@ -66,6 +67,12 @@ myPleaAgreements <- plea_agreements %>%
                                         TRUE ~ NA_character_ ),
             `Felony Conviction` = tfelony|Name %in% Felony_Convictions$Name[Felony_Convictions$FELONY])
 
-myPleaAgreements %>% sheet_write(gsUrl,"Plea Outcomes")
+# myPleaAgreements %>% sheet_write(gsUrl,"Plea Outcomes")
 myPleaAgreements %>% group_by(`Reserved 3A1.4`,`Offense Level`,`Felony Conviction`) %>%
   summarise(Count = n())
+
+plea_agreements_dedup <- myPleaAgreements %>%
+  arrange(Name,`Case Number`, desc(`Reserved 3A1.4`)) %>% filter(!duplicated(paste(Name, `Case Number`)))
+
+plea_agreements_dedup$`Reserved 3A1.4`[plea_agreements_dedup$`Offense Level` == "Felony"] %>% table
+plea_agreements_dedup$`Reserved 3A1.4`[plea_agreements_dedup$`Felony Conviction`] %>% table
