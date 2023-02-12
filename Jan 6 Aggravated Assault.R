@@ -69,7 +69,7 @@ TFelony <- TOFFLVL == 4 & apply(DISP,2,function(x)grepl("Convicted",x))
 TwoFelonies <- rowSums(TFelony)>1
 
 # aaMat[1][unlist(aaMat[1] %>% lapply(is.null))] <- NA
-aaMat <- aaMat %>% bind_rows()
+aaMat <- aaMat %>% bind_cols()
 aa <- rowSums(aaMat)>0
 table(aa)
 jan6$Name[aa & TwoFelonies]
@@ -77,9 +77,10 @@ jan6$Name[aa & TwoFelonies]
 assaults <- fc2 %>% filter(Name %in% jan6$Name[aa])
 
 
-aaMat <- apply(ttitles, 1, function(x)unlist(lapply(x,function(y)str_extract_all(y,"18\\:[0-9]+") %in% str_extract_all(myTitles,"18\\:[0-9]+")))) #& apply(DISP,2,function(x)grepl("Convicted",x))
+aaMat <- apply(ttitles, 1, function(x)unlist(lapply(x,function(y)str_extract_all(y,"18\\:[0-9]+") %in% str_extract_all(myTitles,"18\\:[0-9]+")))) 
 # aaMat[1][unlist(aaMat[1] %>% lapply(is.null))] <- NA
 aaMat <- aaMat %>% bind_rows()
+aaMat <- aaMat & apply(DISP,2,function(x)grepl("Convicted",x))
 aa <- rowSums(aaMat)>0
 table(aa)
 jan6$Name[aa & !is.na(jan6$SENTDATE) & as.Date(jan6$SENTDATE) > as.Date("2021-01-06")]

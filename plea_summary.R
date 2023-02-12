@@ -75,4 +75,5 @@ plea_agreements_dedup <- myPleaAgreements %>%
   arrange(Name,`Case Number`, desc(`Reserved 3A1.4`)) %>% filter(!duplicated(paste(Name, `Case Number`)))
 
 plea_agreements_dedup$`Reserved 3A1.4`[plea_agreements_dedup$`Offense Level` == "Felony"] %>% table
-plea_agreements_dedup$`Reserved 3A1.4`[plea_agreements_dedup$`Felony Conviction`] %>% table
+plea_agreements_dedup$`Reserved 3A1.4`[plea_agreements_dedup$Name %in% fc2$Name[fc2$FELONY]] %>% table
+plea_agreements_dedup$DISPmax %>% table
